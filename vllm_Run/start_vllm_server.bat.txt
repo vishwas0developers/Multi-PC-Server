@@ -1,0 +1,77 @@
+@echo off
+setlocal enabledelayedexpansion
+title GLM-4.6 vLLM Server (Single Console)
+color 0E
+
+:: =========================================================
+::  USER CONFIGURATION
+:: =========================================================
+set WSL_PASSWORD=6162
+
+:: =========================================================
+:: STEP 0: Auto-Elevate
+:: =========================================================
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Requesting Administrator privileges...
+    powershell -Command "Start-Process '%~dpnx0' -Verb RunAs"
+    exit /b
+)
+
+echo ============================================
+echo    Starting vLLM Server (Integrated Log)
+echo ============================================
+echo.
+
+:: ---------------------------------------------------------
+:: STEP 1: Detect Network
+:: ---------------------------------------------------------
+echo [1/3] Detecting Network...
+for /f "usebackq tokens=*" %%A in (`powershell -Command "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null -and $_.NetAdapter.Status -eq 'Up' } | Select-Object -First 1).IPv4Address.IPAddress"`) do set WIN_IP=%%A
+echo      Host IP: %WIN_IP%
+
+:: ---------------------------------------------------------
+:: STEP 2: Configure Firewall
+:: ---------------------------------------------------------
+echo [2/3] Configuring Firewall...
+
+:: Open Port 8000 (API) & 10000-60000 (Data)
+powershell -Command "New-NetFirewallRule -DisplayName 'vLLM_API_Allow' -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow -Profile Any -ErrorAction SilentlyContinue"
+
+echo      [OK] Firewall Ready.
+echo.
+
+:: ---------------------------------------------------------
+:: STEP 3: Launch vLLM (Direct Mode)
+:: ---------------------------------------------------------
+echo [3/3] Launching Model...
+echo.
+echo =======================================================
+echo  API URL: http://%WIN_IP%:8000/v1
+echo  Logs will appear below.
+echo  Press Ctrl+C to stop the server.
+echo =======================================================
+echo.
+
+set SH_FILE=/cluster/llm/rayvllm/host_start_vllm.sh
+
+:: Run WSL directly in this window (No new terminal)
+wsl -e bash -c "export WSL_PASSWORD=%WSL_PASSWORD% && bash %SH_FILE%"
+
+:: Capture Exit Code to check for errors
+set EXIT_CODE=%errorlevel%
+
+echo.
+echo =======================================================
+if %EXIT_CODE% equ 0 (
+    echo  vLLM Server Stopped Gracefully.
+) else (
+    echo  [ERROR] vLLM Server Crashed or Stopped with Error!
+    echo  Exit Code: %EXIT_CODE%
+    echo  Please check the logs above.
+)
+echo =======================================================
+echo.
+
+:: Pause ensures the window stays open on error
+pause

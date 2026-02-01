@@ -1,0 +1,72 @@
+@echo off
+title GLM-4.6 Worker PC One-Time Setup (Fixed)
+color 0B
+
+echo ====================================
+echo GLM-4.6 Worker PC One-Time Setup
+echo ====================================
+echo.
+
+REM Check if WSL is installed
+wsl --list >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Installing WSL2...
+    wsl --install -d Ubuntu
+    echo Please restart PC and run this batch file again.
+    pause
+    exit /b 1
+)
+
+echo WSL2 found. Setting up Worker environment...
+echo.
+
+REM Create setup script in temp file
+echo #!/bin/bash > %TEMP%\setup_worker.sh
+echo sudo apt update ^&^& sudo apt install -y python3 python3-venv python3-pip python3-dev build-essential >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo # Create directories >> %TEMP%\setup_worker.sh
+echo sudo mkdir -p /cluster/llm >> %TEMP%\setup_worker.sh
+echo sudo chown -R $USER:$USER /cluster >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo # Create virtual environment >> %TEMP%\setup_worker.sh
+echo python3 -m venv /cluster/llm/rayvllm >> %TEMP%\setup_worker.sh
+echo source /cluster/llm/rayvllm/bin/activate >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo # Install Ray and vLLM >> %TEMP%\setup_worker.sh
+echo pip install ray[serve] vllm --extra-index-url https://download.pytorch.org/whl/cu128 >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo # Create worker script >> %TEMP%\setup_worker.sh
+echo cat ^> /cluster/llm/rayvllm/worker_start.sh ^<^< 'EOF' >> %TEMP%\setup_worker.sh
+echo #!/bin/bash >> %TEMP%\setup_worker.sh
+echo source /cluster/llm/rayvllm/bin/activate >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo # Configuration - UPDATE HOST_IP with your Host PC's IP >> %TEMP%\setup_worker.sh
+echo RAY_HEAD_IP=192.168.1.100 >> %TEMP%\setup_worker.sh
+echo WORKER_IP=$(hostname -I ^| awk '{print $1}') >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo echo 'Starting Ray Worker Node...' >> %TEMP%\setup_worker.sh
+echo echo 'Connecting to Host:' $RAY_HEAD_IP >> %TEMP%\setup_worker.sh
+echo echo 'Worker IP:' $WORKER_IP >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo # Start Ray worker >> %TEMP%\setup_worker.sh
+echo ray start --address=$RAY_HEAD_IP:6379 \ >> %TEMP%\setup_worker.sh
+echo     --node-ip-address=$WORKER_IP \ >> %TEMP%\setup_worker.sh
+echo     --block >> %TEMP%\setup_worker.sh
+echo EOF >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo chmod +x /cluster/llm/rayvllm/worker_start.sh >> %TEMP%\setup_worker.sh
+echo. >> %TEMP%\setup_worker.sh
+echo echo Worker PC setup completed successfully! >> %TEMP%\setup_worker.sh
+
+REM Run the setup script in WSL
+wsl --exec bash %TEMP%\setup_worker.sh
+
+echo.
+echo ====================================
+echo Worker PC Setup Complete!
+echo ====================================
+echo.
+echo IMPORTANT: Update HOST_IP in worker script with your Host PC IP
+echo Next: Run 'start_worker_node.bat' to connect to Host
+echo.
+pause

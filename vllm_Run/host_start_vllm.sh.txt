@@ -1,0 +1,75 @@
+#!/bin/bash
+set -e
+
+# ============================================================
+#     TinyLlama Distributed Launcher (FINAL FIX)
+# ============================================================
+
+# Get IP
+HOST_LAN_IP=$(ip route get 1 | awk '{print $7;exit}')
+SUDO="echo $WSL_PASSWORD | sudo -S"
+
+# --- RE-APPLY HOSTS FIX (Just in case) ---
+# This ensures that even if Ray started earlier, the shell session for vLLM has the right DNS.
+CURRENT_HOSTNAME=$(hostname)
+$SUDO sed -i "/127.0.1.1/d" /etc/hosts
+$SUDO sed -i "/$CURRENT_HOSTNAME/d" /etc/hosts
+echo "$HOST_LAN_IP $CURRENT_HOSTNAME" | $SUDO tee -a /etc/hosts >/dev/null
+
+# --- NETWORK VARIABLES ---
+export VLLM_HOST_IP="$HOST_LAN_IP"
+export RAY_NODE_IP_ADDRESS="$HOST_LAN_IP"
+export RAY_ADDRESS="$HOST_LAN_IP:6379"
+
+# INTERFACE BINDING (Crucial for Mirrored Mode)
+export GLOO_SOCKET_IFNAME="eth0"
+export NCCL_SOCKET_IFNAME="eth0"
+export TP_SOCKET_IFNAME="eth0"
+export NCCL_IB_DISABLE=1
+
+# Model Config
+TP_SIZE=2
+MODEL_NAME="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+MODEL_DIR_WIN="/mnt/d/Ai_Model/Huggingface/Models/models--TinyLlama--TinyLlama-1.1B-Chat-v1.0"
+export TRANSFORMERS_CACHE="/mnt/d/Ai_Model/Huggingface/Models"
+
+echo "================================================="
+echo "  TinyLlama Distributed Launcher"
+echo "================================================="
+echo "Target IP: $HOST_LAN_IP"
+echo "Interface: eth0"
+echo "Hosts Fix: Applied ($CURRENT_HOSTNAME -> $HOST_LAN_IP)"
+echo
+
+source /cluster/llm/rayvllm/bin/activate
+
+if [ ! -d "$MODEL_DIR_WIN" ]; then
+    mkdir -p "$MODEL_DIR_WIN"
+fi
+if [ ! -f "$MODEL_DIR_WIN/config.json" ]; then
+    echo "[INFO] Downloading Model..."
+    python3 - <<EOF
+from huggingface_hub import snapshot_download
+snapshot_download(repo_id="$MODEL_NAME", local_dir="$MODEL_DIR_WIN")
+EOF
+fi
+
+echo
+echo "================================================="
+echo "   Starting vLLM Server..."
+echo "================================================="
+echo
+
+# Launch
+python3 -m vllm.entrypoints.openai.api_server \
+    --model "$MODEL_DIR_WIN" \
+    --served-model-name tiny-llama-chat \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --tensor-parallel-size $TP_SIZE \
+    --distributed-executor-backend ray \
+    --gpu-memory-utilization 0.85 \
+    --max-model-len 2048 \
+    --trust-remote-code \
+    --swap-space 2 \
+    --disable-log-requests

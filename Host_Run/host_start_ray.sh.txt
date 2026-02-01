@@ -1,0 +1,49 @@
+#!/bin/bash
+set -e
+source "/cluster/llm/rayvllm/bin/activate"
+
+# --- 1. ROBUST IP DETECTION ---
+# We use 'ip route' to find the source IP used to reach the gateway.
+# This is more reliable than hostname -I in Mirrored Mode.
+HOST_LAN_IP=$(ip route get 1 | awk '{print $7;exit}')
+
+if [ -z "$HOST_LAN_IP" ]; then
+    echo "[ERROR] Could not detect LAN IP. Fallback to 192.168.1.3"
+    HOST_LAN_IP="192.168.1.3"
+fi
+
+echo "---------------------------------------------"
+echo "Host Detected IP: $HOST_LAN_IP"
+echo "---------------------------------------------"
+
+# --- 2. HOSTS FILE FIX (THE CRITICAL PART) ---
+# We verify if the hostname points to 127.0.1.1. If yes, we kill it.
+CURRENT_HOSTNAME=$(hostname)
+SUDO="echo $WSL_PASSWORD | sudo -S"
+
+echo "[INFO] Cleaning /etc/hosts..."
+# Remove lines containing 127.0.1.1
+$SUDO sed -i "/127.0.1.1/d" /etc/hosts
+# Remove lines containing the current hostname (to avoid duplicates)
+$SUDO sed -i "/$CURRENT_HOSTNAME/d" /etc/hosts
+
+echo "[INFO] Mapping $CURRENT_HOSTNAME -> $HOST_LAN_IP"
+# Add the correct mapping
+echo "$HOST_LAN_IP $CURRENT_HOSTNAME" | $SUDO tee -a /etc/hosts >/dev/null
+
+# --- 3. RAY CONFIG ---
+export RAY_memory_monitor_refresh_ms=0
+export VLLM_HOST_IP="$HOST_LAN_IP"
+export RAY_NODE_IP_ADDRESS="$HOST_LAN_IP"
+export RAY_gcs_rpc_server_reconnect_timeout_s=60
+
+ray stop --force >/dev/null 2>&1 || true
+
+echo "[INFO] Starting Ray Head..."
+ray start --head \
+  --node-ip-address=$HOST_LAN_IP \
+  --port=6379 \
+  --dashboard-host=0.0.0.0 \
+  --dashboard-port=8265 \
+  --disable-usage-stats \
+  --block

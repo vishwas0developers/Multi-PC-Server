@@ -1,0 +1,21 @@
+#!/bin/bash
+set -e
+
+# Activate Virtual Environment
+source /cluster/llm/rayvllm/bin/activate
+
+# Get Dynamic WSL IP
+WSL_IP=$(hostname -I | awk '{print $1}')
+
+# Force stop any zombie processes
+ray stop --force > /dev/null 2>&1 || true
+
+# Start Ray Head
+# --block keeps it running in background without closing
+ray start --head \
+  --node-ip-address=$WSL_IP \
+  --port=6379 \
+  --dashboard-host=0.0.0.0 \
+  --dashboard-port=8265 \
+  --disable-usage-stats \
+  --block

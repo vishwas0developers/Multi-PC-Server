@@ -1,0 +1,134 @@
+@echo off
+title GLM-4.6 Host PC Smart Setup (v11 - Bulletproof Method)
+color 0E
+
+echo ===================================================
+echo  GLM-4.6 Host PC One-Time Smart Setup
+echo ===================================================
+echo Yeh script nimnlikhit kaam karegi:
+echo 1. WSL2 ki jaanch karegi aur yadi aavashyak ho to install karegi.
+echo 2. Aavashyak firewall ports (6379, 8000, 8265) kholegi.
+echo 3. WSL ke andar Python environment, Ray, aur vLLM set up karegi.
+echo Is script ko kai baar chalaana surakshit hai.
+echo.
+
+:CHECK_PERMISSIONS
+    net session >nul 2>&1
+    if %errorlevel% NEQ 0 (
+        echo TRUTI: Is script ke liye administrative visheshadhikar ki aavashyakta hai.
+        echo Kripya right-click karke "Run as administrator" chunein.
+        echo.
+        pause
+        exit /b
+    )
+
+echo ===================================================
+echo [Phase 1/3] Windows Subsystem for Linux (WSL) ki jaanch ki ja rahi hai
+echo ===================================================
+wsl --list >nul 2>&1
+if %errorlevel% neq 0 (
+    echo WSL2 install kiya ja raha hai. Ismein kuchh minute lag sakte hain...
+    wsl --install -d Ubuntu
+    echo.
+    echo =========================================================
+    echo  MAHATVAPURN: WSL setup poora karne ke liye kripya apne PC ko restart karein.
+    echo  Restart karne ke baad, is batch file ko phir se chalayein.
+    echo =========================================================
+    echo.
+    pause
+    exit /b 1
+)
+echo [OK] WSL2 pahle se hi install hai.
+echo.
+
+echo ===================================================
+echo [Phase 2/3] Ray ^& vLLM ke liye Windows Firewall ko configure kiya ja raha hai
+echo ===================================================
+set ports_to_open=6379 8000 8265
+for %%p in (%ports_to_open%) do (
+    netsh advfirewall firewall show rule name="Ray/vLLM (Port %%p)" >nul
+    if errorlevel 1 (
+        echo Port %%p ke liye firewall niyam joda ja raha hai...
+        netsh advfirewall firewall add rule name="Ray/vLLM (Port %%p)" dir=in action=allow protocol=TCP localport=%%p >nul
+        echo [OK] Port %%p ke liye firewall niyam banaya gaya.
+    ) else (
+        echo [OK] Port %%p ke liye firewall niyam pahle se hi maujood hai.
+    )
+)
+echo.
+
+echo ===================================================
+echo [Phase 3/3] WSL mein Host Environment set up kiya ja raha hai
+echo ===================================================
+set SCRIPT_FILE=%TEMP%\wsl_setup_script.txt
+
+REM Step 1: Ek saadi text file mein poori bash script likhein.
+(
+echo #!/bin/bash
+echo set -e
+echo.
+echo VENV_PATH='/cluster/llm/rayvllm'
+echo if [ -d "\$VENV_PATH" ]; then
+echo "    echo '[OK] Host PC pahle se hi configure hai.'"
+echo "    exit 0"
+echo fi
+echo.
+echo echo '--- WSL Admin (sudo) password ki aavashyakta ho sakti hai ---'
+echo sudo -v
+echo.
+echo echo '--- Host PC ke liye naya installation shuru kiya ja raha hai... ---'
+echo echo 'Package list update ki ja rahi hain...'
+echo sudo apt-get update
+echo.
+echo echo 'Zaroori packages install kiye ja rahe hain...'
+echo sudo apt-get install -y python3.10-venv python3-pip python3-dev build-essential
+echo.
+echo echo 'Project directories banayi ja rahi hain...'
+echo sudo mkdir -p /cluster/llm && sudo chown -R \$USER:\$USER /cluster
+echo.
+echo echo 'Python virtual environment banaya ja raha hai...'
+echo python3 -m venv \$VENV_PATH
+echo.
+echo echo 'Virtual environment mein zaroori packages install kiye ja rahe hain...'
+echo source \$VENV_PATH/bin/activate
+echo pip install --upgrade pip
+echo pip install ray[serve] vllm --extra-index-url https://download.pytorch.org/whl/cu121
+echo deactivate
+echo.
+echo echo 'HuggingFace cache directory configure ki ja rahi hai...'
+echo "grep -qF 'export HF_HOME' ~/.bashrc || echo 'export HF_HOME=/mnt/d/Ai_Model/Huggingface' >> ~/.bashrc"
+echo "grep -qF 'export HUGGINGFACE_HUB_CACHE' ~/.bashrc || echo 'export HUGGINGFACE_HUB_CACHE=/mnt/d/Ai_Model/Huggingface/cache' >> ~/.bashrc"
+echo.
+echo echo '[SUCCESS] Host PC setup poora ho gaya!'
+) > "%SCRIPT_FILE%"
+
+REM Windows path ko WSL path mein convert karein
+for /f "tokens=*" %%a in ('wsl wslpath -a "%SCRIPT_FILE%"') do set SCRIPT_WSL_PATH=%%a
+
+REM Step 2: Ek hi, saral command mein script ko theek karein aur chalayein.
+echo Script ko Linux-compatible banaya ja raha hai aur chalaya ja raha hai...
+wsl bash -c "sed -i 's/\r$//' '%SCRIPT_WSL_PATH%' && bash '%SCRIPT_WSL_PATH%'"
+
+REM ErrorLevel ki jaanch karein.
+if %errorlevel% neq 0 (
+    echo.
+    echo [TRUTI] WSL ke andar setup script chalane mein ek samasya aayi.
+    echo Kripya upar diye gaye error messages ko check karein.
+    del "%SCRIPT_FILE%" >nul 2>&1
+    pause
+    exit /b 1
+)
+
+REM Safal hone par temporary file ko delete kar dein.
+del "%SCRIPT_FILE%" >nul 2>&1
+
+echo.
+echo ===================================================
+echo            Host PC Setup Safal Raha!
+echo ===================================================
+echo.
+echo Agle Kadam:
+echo 1. Sunishchit karein ki aapke Worker PCs set up hain.
+echo 2. GLM-4.6 server shuru karne ke liye 'start_host_server.bat' chalayein.
+echo.
+pause
